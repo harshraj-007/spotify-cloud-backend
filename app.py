@@ -38,7 +38,7 @@ def get_track():
         if current_track and current_track.get('is_playing'):
             track_name = current_track['item']['name']
             artist_name = current_track['item']['artists'][0]['name']
-            image_url = current_track['item']['album']['images'][0]['url']
+            image_url = current_track['item']['album']['images'][1]['url']
             
             return jsonify({
                 "playing": True,
