@@ -25,53 +25,46 @@ sp_oauth = SpotifyOAuth(
 )
 
 # ── GLOBAL IMAGE CACHE ────────────────────────────────────────────────
-# Tracks the currently playing raw Spotify image URL globally in the app's instance memory
 global_state = {
     "current_spotify_art_url": ""
 }
 
-# ── NEW IMAGE INTERCEPTION PIPELINE ────────────────────────────────────
+# ── IMAGE INTERCEPTION PIPELINE ────────────────────────────────────
 @app.route('/get_track_art', methods=['GET'])
 def get_track_art():
     try:
         spotify_url = global_state.get("current_spotify_art_url")
         if not spotify_url:
-            # Send a default placeholder block if no track is active
             img = Image.new('RGB', (300, 300), color=(25, 25, 25))
             return serve_pil_image(img)
 
-        # Pull the image payload down to Render's memory space
         response = requests.get(spotify_url, timeout=5)
         if response.status_code != 200:
             raise Exception("Failed to fetch image stream from Spotify")
 
-        # Open image data streams into Pillow 
         img = Image.open(io.BytesIO(response.content))
         
         # TRANSFORMATION ROUTE:
-        # 1. Strip progressive layout frames and transparency channels by dropping down to baseline RGB
         img = img.convert('RGB')
-        # 2. Match size parameters directly with the ESP32's image processing block boundary
         img = img.resize((300, 300), Image.Resampling.LANCZOS)
         
         return serve_pil_image(img)
 
     except Exception as e:
         print(f"Pillow Processing Engine Failure: {e}")
-        # Secondary fallback layer to prevent hardware exceptions on the display side
         fail_img = Image.new('RGB', (300, 300), color=(20, 20, 20))
         return serve_pil_image(fail_img)
 
 def serve_pil_image(pil_img):
     """Helper layout logic to stream the image out over HTTP as a clean baseline JPEG"""
     img_io = io.BytesIO()
-    # HARD STAGE BASELINE PARSING CODE: progressive=False strips the progressive components
-    pil_img.save(img_io, 'JPEG', quality=85, progressive=False)
+    # HARD STAGE BASELINE PARSING CODE: Added optimize=False to block progressive shifts completely
+    pil_img.save(img_io, 'JPEG', quality=80, progressive=False, optimize=False)
     img_io.seek(0)
     return send_file(img_io, mimetype='image/jpeg')
 
 
-# ── UPDATED TRACK METADATA ROUTE ─────────────────────────────────────
+# ── TRACK METADATA ROUTE ─────────────────────────────────────────────
 @app.route('/get_track', methods=['GET'])
 def get_track():
     token_info = sp_oauth.validate_token(sp_oauth.cache_handler.get_cached_token())
@@ -88,24 +81,18 @@ def get_track():
             track_name = current_track['item']['name']
             artist_name = current_track['item']['artists'][0]['name']
             
-            # Extract the 300x300 pixel URL asset link
             raw_spotify_url = current_track['item']['album']['images'][1]['url']
-            
-            # INTERCEPT: Store the raw Spotify URL in the memory pool for the /get_track_art endpoint
             global_state["current_spotify_art_url"] = raw_spotify_url
             
-            # Get the current deployment host domain name to point the ESP32 back to this server
             host_url = request.host_url.rstrip('/')
             
             return jsonify({
                 "playing": True,
                 "track": track_name,
                 "artist": artist_name,
-                # Force the ESP32 to query our new baseline conversion endpoint instead of Spotify directly
                 "image_url": f"{host_url}/get_track_art"
             })
         
-        # Clear image cache path if track playing state drops out
         global_state["current_spotify_art_url"] = ""
         return jsonify({"playing": False, "msg": "No active playback detected"})
         
